@@ -92,23 +92,26 @@ This is how a 0.95 combined score and a 0.55 combined score produce visibly
 different label confidence (90% vs 10%) instead of both just rounding to
 "yes/no AI."
 
-**Validating it's meaningful:** ran four deliberately chosen test inputs
-(provided in the project spec) through the full pipeline with representative
-LLM scores:
+**Validating it's meaningful:** ran three real submissions through the live system (Groq + stylometric signals both active):
 
 | input | llm_score | stylometric_score | combined | attribution | confidence |
 |---|---|---|---|---|---|
-| Clearly AI-generated paragraph | 0.92 | 0.13 | 0.7225 | `likely_ai` | **44%** |
-| Clearly human, casual review | 0.05 | 0.00 | 0.0375 | `likely_human` | **92%** |
-| Borderline: formal human (econ writing) | 0.55 | 0.12 | 0.4425 | `uncertain` | 12% |
-| Borderline: lightly-edited AI text | 0.60 | 0.19 | 0.4975 | `uncertain` | 0% |
+| Descriptive personal narrative (porch scene) | 0.20 | 0.4969 | 0.2742 | `likely_human` | 45% |
+| Formal AI-style paragraph ("transformative paradigm shift...") | 0.80 | 0.1306 | 0.6327 | `uncertain` | 27% |
+| Casual human review (ramen post) | 0.20 | 0.00 | 0.15 | `likely_human` | 70% |
 
-The two clear-cut cases land confidently on opposite sides; both
-borderline cases correctly land in "uncertain" with low confidence rather
-than being forced toward a binary pick. That's the two example submissions
-with noticeably different scores the spec asks for: the human casual
-review at 92% confidence vs. the AI paragraph at a much lower 44%
-confidence, despite both being correctly classified.
+The casual review and the descriptive narrative both correctly land as
+`likely_human`, but at different confidence levels (70% vs 45%) -- showing
+the system doesn't collapse to a flat "human/not human" binary even within
+one attribution. The formal AI-style paragraph is the interesting case: the
+LLM signal alone scored it fairly AI-like (0.80), but because that wasn't
+backed up by the stylometric signal, the asymmetric thresholds held the
+combined verdict at "uncertain" rather than confidently flagging it --
+exactly the false-positive-averse behavior the threshold design was meant
+to produce. It also surfaced a real limitation in the threshold calibration
+(see "Known limitations"): with only moderate signal agreement, even a
+text that reads as clearly AI-generated to a human eye doesn't clear the
+0.70 bar for `likely_ai`.
 
 ## Transparency label
 
@@ -133,8 +136,18 @@ creator across a full day.
 Verified with the 12-rapid-request test:
 
 ```
-[PASTE your 12-line status-code output here after running the for-loop test --
- expect 200 x10 then 429 x2]
+200
+200
+200
+200
+200
+429
+429
+429
+429
+429
+429
+429
 ```
 
 ## Audit log
@@ -146,9 +159,23 @@ appeal updates that same row's `status` and adds `appeal_reasoning` +
 `appeal_timestamp` -- so the full history of a piece of content (original
 decision + any appeal) lives on one queryable record. View via `GET /log`.
 
-```
-[PASTE at least 3 entries from GET /log here, including at least one
- entry that shows status: "under_review" after filing an appeal]
+
+```json
+{
+    "appeal_reasoning": "I wrote this myself from personal experience sitting on my porch.",
+    "appeal_timestamp": "2026-06-30T22:59:08.286414+00:00",
+    "attribution": "likely_human",
+    "combined_score": 0.2742,
+    "confidence": 0.4516,
+    "content_id": "2e27c45a-2471-4564-af2e-d83b0bc1e62f",
+    "creator_id": "test-user-1",
+    "label": "Our system found no strong signals of AI generation in this content (confidence: 45%). This reflects an automated assessment, not a verified guarantee of authorship.",
+    "llm_score": 0.2,
+    "status": "under_review",
+    "stylometric_score": 0.4969,
+    "timestamp": "2026-06-30T22:58:12.841494+00:00"
+}
+
 ```
 
 ## Appeals workflow
@@ -173,6 +200,15 @@ submissions are effectively single-signal in practice, undercutting the
 "at least 2 distinct signals" intent of the pipeline for exactly the
 content type (short-form social posts, captions) where AI detection might
 matter most.
+
+Calibration testing also showed the "likely_ai" threshold (0.70) is harder
+to clear than expected in practice: a paragraph that reads as clearly
+AI-generated to a human eye scored 0.80 on the LLM signal alone, but
+because the stylometric signal didn't agree as strongly, the combined
+score (0.63) landed in "uncertain" rather than "likely_ai." This is the
+false-positive-averse design working as intended, but it means confidently
+flagging AI content requires fairly strong agreement between both signals
+-- a single strong signal isn't enough to cross the bar alone.
 
 ## Spec reflection
 
